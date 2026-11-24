@@ -8,13 +8,22 @@
 #include <unistd.h>
 #include <poll.h>
 #include <signal.h>
+#include <ctype.h>
+#include <errno.h>
 
 #include "include/common.h"
+#include "include/msg_struct.h"
 
 #define MAX_CONN 20
+#define WELCOME "Welcome on the chat "
+#define NICK_MAX 32
+#define INVALID_NICKNAME "Invalid nickname"
+#define NICKNAME_TAKEN "Nickname already taken"
+#define WHO_LIST "Online users are\n"
 
 struct client_node {
     int fd;
+    char nickname[NICK_LEN];
     struct sockaddr_in addr;
     struct client_node *next;
 };
@@ -23,6 +32,7 @@ int add_client(struct client_node **head, int fd, struct sockaddr_in addr) {
     struct client_node *new_client_node = malloc(sizeof(struct client_node));
     if (new_client_node == NULL) return -1;
     new_client_node->fd = fd;
+    new_client_node->nickname[0] = '\0';
     new_client_node->addr = addr;
     new_client_node->next = *head; 
     *head = new_client_node;
@@ -53,6 +63,39 @@ void free_client_list(struct client_node **head) {
         current = next;
     }
     *head = NULL;
+}
+
+void add_nickname_client(struct client_node **head, int fd, char *nickname) {
+    struct client_node *current = *head;
+    while (current != NULL) {
+        if (current->fd == fd) {
+            strcpy(current->nickname, nickname);
+            //printf("successfully added %s (nickname): %s (client.nickname)\n", nickname, current->nickname);
+            break;
+        }
+        current = current->next;
+    }
+}
+
+// return 0 if valid
+int is_valid_nickname(char *nickname) {
+    size_t len = strlen(nickname);
+    if ((len == 0) || len > NICK_MAX ) return 1;
+    while (*nickname != '\0') {
+        if (isalnum((unsigned char)*nickname) == 0) return 1;
+        nickname++;
+    }
+    return 0;
+}
+
+// return 0 if free
+int is_nickname_free(struct client_node **head, char *nickname) {
+    struct client_node *current = *head;
+    while (current != NULL) {
+        if (strcmp(current->nickname, nickname) == 0) return 1;
+        current = current->next;
+    }
+    return 0;
 }
 
 int recv_message_size(int sockfd){
@@ -139,7 +182,7 @@ int handle_bind(char *port) {
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s<server_port>\n", argv[0]);
+        fprintf(stderr, "usage: %s <server_port>\n", argv[0]);
         return EXIT_FAILURE;
     }
     char *port = argv[1];
@@ -151,7 +194,7 @@ int main(int argc, char *argv[]) {
     signal(SIGPIPE, SIG_IGN); // so we can write to a dead client without killing the server itself
 	welcoming_sfd = handle_bind(port);
 	if ((listen(welcoming_sfd, SOMAXCONN)) != 0) {
-		perror("listen()\n");
+		perror("listen()");
 		exit(EXIT_FAILURE);
 	}
 
@@ -161,7 +204,8 @@ int main(int argc, char *argv[]) {
     }
     fds[0].fd = welcoming_sfd;
     fds[0].events = POLLIN;
-    int client_count = 0;
+
+    struct message msg;
 
     while (1) {
         if (poll(fds, MAX_CONN, -1) == -1) {
@@ -196,43 +240,78 @@ int main(int argc, char *argv[]) {
                 fds[j].fd = connection_fd;
                 fds[j].events = POLLHUP | POLLIN;
                 fds[j].revents = 0;
-                client_count++;
-                printf("%d client connected\n", client_count);
                 
             } else if (fds[i].fd != welcoming_sfd && (fds[i].revents & (POLLIN | POLLHUP))) {
-                char buf[MSG_LEN] = {0};
                 int close_connection_flag = 0;
+
+                // on recoit la struct
                 int msg_size = recv_message_size(fds[i].fd);
-                if (msg_size <= 0 || msg_size >= MSG_LEN) close_connection_flag = 1; //client left
-                else if (recv_message(fds[i].fd, buf, msg_size) != 0) close_connection_flag = 1; 
-                else if (strcmp(buf, "/quit\n") == 0) close_connection_flag = 1;
-                else {
-                    printf("%s", buf);
-                    // we echo size then message to client
-                    if (send_next_message_size(fds[i].fd, msg_size) != 0
-                        || send_message(fds[i].fd, buf, msg_size) != 0) {
-                        close_connection_flag = 1;
+                if (msg_size != sizeof(struct message)) close_connection_flag = 1;
+                else if (recv_message(fds[i].fd, &msg, sizeof(struct message)) != 0) close_connection_flag = 1;
+                else { 
+                    msg.infos[INFOS_LEN - 1] = '\0';
+                    switch (msg.type) {
+                        case NICKNAME_NEW:
+                            // on ajoute le pseudo au client concerné
+                            if (is_valid_nickname(msg.infos) != 0) {
+                                if (send_next_message_size(fds[i].fd, sizeof(INVALID_NICKNAME)) != 0
+                                    || send_message(fds[i].fd, INVALID_NICKNAME, sizeof(INVALID_NICKNAME)) != 0) {
+                                    close_connection_flag = 1;
+                                }
+                                break;
+                            }
+                            if (is_nickname_free(&clients, msg.infos) != 0) {
+                                if (send_next_message_size(fds[i].fd, sizeof(NICKNAME_TAKEN)) != 0
+                                    || send_message(fds[i].fd, NICKNAME_TAKEN, sizeof(NICKNAME_TAKEN)) != 0) {
+                                    close_connection_flag = 1;
+                                }
+                                break;
+                            }
+                            else {
+                                add_nickname_client(&clients, fds[i].fd, msg.infos); // penser à vérifier l'ajout du nickname
+                                printf("%s is connected\n", msg.infos);
+                                // on lui répond
+                                //len = strlen(WELCOME) + INFOS_LEN + 1;
+                                char welcome_buff[sizeof(WELCOME) + INFOS_LEN + 1];
+                                strcpy(welcome_buff, WELCOME);
+                                strcat(welcome_buff, msg.infos);
+                                //strcat(welcome_buff, "\n");
+                                if (send_next_message_size(fds[i].fd, strlen(welcome_buff) + 1) != 0
+                                    || send_message(fds[i].fd, welcome_buff, strlen(welcome_buff) + 1) != 0) {
+                                    close_connection_flag = 1;
+                                }
+                                break;
+                            }
+                        case NICKNAME_LIST:
+                            char who_list_buff[MSG_LEN] = {0};
+                            strcpy(who_list_buff, WHO_LIST);
+                            struct client_node *current = clients;
+                            while (current != NULL) {
+                                if (current->nickname[0] != '\0') {              // ignore les clients sans pseudo
+                                    strcat(who_list_buff, "\t- ");
+                                    strcat(who_list_buff, current->nickname);
+                                    strcat(who_list_buff, "\n");
+                                }
+                                current = current->next;
+                            }
+                            if (send_next_message_size(fds[i].fd, strlen(who_list_buff) + 1) != 0
+                                || send_message(fds[i].fd, who_list_buff, strlen(who_list_buff) + 1) != 0) {
+                                close_connection_flag = 1;
+                            }
+                            break;
+                        default:
+                            printf("switch default\n");
                     }
                 }
                 if (close_connection_flag) {
                     printf("server: closing fd (%d)\n", fds[i].fd);
+                    remove_client(&clients, fds[i].fd);
                     close(fds[i].fd);
                     fds[i].fd = -1;
                     fds[i].events = 0;
                     fds[i].revents = 0;
-                    remove_client(&clients, fds[i].fd);
-                    client_count--;
-                    printf("1 client connected, %d remaining\n", client_count);
                 }
-            } 
-            // else if (fds[i].fd != welcoming_sfd && (fds[i].revents & POLLHUP)) {
-            //     // close fd
-            //     close(fds[i].fd);
-            //     // free entry in fds
-            //     fds[i].fd = -1;
-            //     fds[i].events = 0;
-            //     fds[i].revents = 0;
-            // }
+            }
         }
     }
 	printf("server: shutting down\n");

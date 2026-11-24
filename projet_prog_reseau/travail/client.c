@@ -62,13 +62,16 @@ int recv_message(int sockfd, void * buf, int size){
 void echo_client(int sockfd) {
 	char buff[MSG_LEN];
 	int msg_size;
+	int i = 0;
 	struct pollfd fds[2];
 	fds[0].fd = 0;
 	fds[0].events = POLLIN;
 	fds[1].fd = sockfd;
 	fds[1].events = POLLIN;
 
-	printf("Message: ");
+	struct message msg;
+
+	//printf("Message: ");
 	fflush(stdout);
 	while (1) {
 		//fds[0].revents = 0;
@@ -79,19 +82,42 @@ void echo_client(int sockfd) {
 		}
 		// Data from keyboard
 		if (fds[0].revents & POLLIN) {
-			//memset(buff, 0, MSG_LEN);
+			memset(buff, 0, MSG_LEN);
+			memset(&msg, 0, sizeof(msg));
 			if (fgets(buff, MSG_LEN, stdin) == NULL) break; // Ctrl-D
-			msg_size = strlen(buff);
+			buff[strcspn(buff, "\n")] = '\0';  // on enlève le '\n' de fin
+			// on vérifie la nature de la commande
+			if (strncmp(buff, "/nick ", 6) == 0) {
+				msg.type = NICKNAME_NEW;
+				strncpy(msg.infos, buff + 6, INFOS_LEN - 1);
+				msg.infos[INFOS_LEN - 1] = '\0';
+				msg.pld_len = 0;
+				// on envoie le struct message configuré
+				if (send_next_message_size(sockfd, sizeof(struct message)) != 0) break;
+				if (send_message(sockfd, (void *)&msg, sizeof(struct message)) != 0) break;
+			} else if (strncmp(buff, "/who", 5) == 0) {
+				msg.type = NICKNAME_LIST;
+				//msg.infos[0] = '\0';
+				//msg.nick_sender[0] = '\0';
+				//msg.pld_len = 0;
+				// on envoie le struct message configuré
+				send_next_message_size(sockfd, sizeof(struct message));
+				send_message(sockfd, (void *)&msg, sizeof(struct message));
+			}
+
+
+
+			//msg_size = strlen(buff);
 			// Sending size then message
-			if (send_next_message_size(sockfd, msg_size) != 0) {
-				printf("client: error on sending message size\n");
-				break;
-			}
-			if (send_message(sockfd, buff, msg_size) != 0) {
-				printf("client: error on sending message\n");
-				break;
-			}
-			if (strcmp(buff, "/quit\n") == 0) {
+			// if (send_next_message_size(sockfd, msg_size) != 0) {
+			// 	printf("client: error on sending message size\n");
+			// 	break;
+			// }
+			// if (send_message(sockfd, buff, msg_size) != 0) {
+			// 	printf("client: error on sending message\n");
+			// 	break;
+			// }
+			if (strcmp(buff, "/quit") == 0) {
 				printf("client: quitting\n");
 				break;
 			}
@@ -109,8 +135,8 @@ void echo_client(int sockfd) {
 				break;
 			}
 			buff[msg_size] = '\0';
-			printf("Received: %s", buff);
-			printf("Message: ");
+			printf("Received: %s\n", buff);
+			//printf("Message: ");
 			fflush(stdout);
 		}
 	}
@@ -132,6 +158,7 @@ int handle_connect(char *domain_name, char *port) {
 			continue;
 		}
 		if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1) {
+			printf("------connected to %s------\n", domain_name);
 			break;
 		}
 		close(sfd);

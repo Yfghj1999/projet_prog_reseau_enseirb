@@ -337,8 +337,11 @@ int main(int argc, char *argv[]) {
                             fwd.pld_len = msg.pld_len;
                             protocol_send_message(dest->fd, &fwd, payload);
                             break;
-
-
+                        }
+                        case ECHO_SEND:{
+                            if(payload == NULL) break;
+                            send_server_text(fds[i].fd,ECHO_SEND,payload,NULL);
+                            break;
                         }
                         default:
                             printf("switch default\n");

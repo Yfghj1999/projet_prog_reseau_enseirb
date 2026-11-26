@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <ctype.h>
 #include <errno.h>
+#include <time.h>
 
 #include "include/common.h"
 #include "include/msg_struct.h"
@@ -25,6 +26,7 @@ struct client_node {
     int fd;
     char nickname[NICK_LEN];
     struct sockaddr_in addr;
+    time_t connection_time;
     struct client_node *next;
 };
 
@@ -34,6 +36,7 @@ int add_client(struct client_node **head, int fd, struct sockaddr_in addr) {
     new_client_node->fd = fd;
     new_client_node->nickname[0] = '\0';
     new_client_node->addr = addr;
+    new_client_node->connection_time = time(NULL);
     new_client_node->next = *head; 
     *head = new_client_node;
     return 0;
@@ -243,6 +246,7 @@ int main(int argc, char *argv[]) {
                 
             } else if (fds[i].fd != welcoming_sfd && (fds[i].revents & (POLLIN | POLLHUP))) {
                 int close_connection_flag = 0;
+                struct client_node *current = clients;
 
                 // on recoit la struct
                 int msg_size = recv_message_size(fds[i].fd);
@@ -285,7 +289,6 @@ int main(int argc, char *argv[]) {
                         case NICKNAME_LIST:
                             char who_list_buff[MSG_LEN] = {0};
                             strcpy(who_list_buff, WHO_LIST);
-                            struct client_node *current = clients;
                             while (current != NULL) {
                                 if (current->nickname[0] != '\0') {              // ignore les clients sans pseudo
                                     strcat(who_list_buff, "\t- ");
@@ -299,6 +302,26 @@ int main(int argc, char *argv[]) {
                                 close_connection_flag = 1;
                             }
                             break;
+                            case NICKNAME_INFOS:
+                            char who_is_buff[MSG_LEN] = {0};
+                            char date_str[32];
+                            strftime(date_str, sizeof(date_str), "%Y/%m/%d@%H:%M", localtime(&current->connection_time));
+                                while (current != NULL) {
+                                    if (strcmp(current->nickname, msg.infos) == 0) {
+                                        snprintf(who_is_buff, sizeof(who_is_buff),
+                                            "%s connected since %s with IP address %s and port number %hu",
+                                            current->nickname,
+                                            date_str,
+                                            inet_ntoa(current->addr.sin_addr),
+                                            ntohs(current->addr.sin_port));
+                                    }
+                                    current = current->next;
+                                }
+                                if (send_next_message_size(fds[i].fd, strlen(who_is_buff) + 1) != 0
+                                    || send_message(fds[i].fd, who_is_buff, strlen(who_is_buff) + 1) != 0) {
+                                    close_connection_flag = 1;
+                                }
+                                break;
                         default:
                             printf("switch default\n");
                     }

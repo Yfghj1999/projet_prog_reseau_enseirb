@@ -118,7 +118,7 @@ void echo_client(int sockfd) {
 				break;
 			}
 			buff[msg_size] = '\0';
-			printf("Received: %s\n", buff);
+			printf("%s\n", buff);
 			fflush(stdout);
 		}
 	}

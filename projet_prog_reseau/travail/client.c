@@ -17,7 +17,6 @@ int send_next_message_size(int socket, int msg_size){
         if (ret <= 0) return -1;
 		bytes_sent += ret;
     }
-    //printf("client: size sent\n");
     return 0;
 }
 
@@ -30,20 +29,17 @@ int recv_message_size(int sockfd){
         if (ret <= 0) return -1;
 		bytes_read += ret;
     }
-    //printf("client: size received\n");
     return size;
 }
 
 int send_message(int socket, void * buf, int msg_size){
     int ret = 0;
     int bytes_sent = 0;
-    //printf("client: sending message\n");
     while (bytes_sent != msg_size){
         ret = write(socket, (char *)buf+bytes_sent, msg_size-bytes_sent);
 		if (ret <= 0) return -1;
         bytes_sent += ret;
     }
-    //printf("client: message sent\n");
     return 0;
 }
 
@@ -55,7 +51,6 @@ int recv_message(int sockfd, void * buf, int size){
 		if (ret <= 0) return -1;
         bytes_read += ret;
     }
-    //printf("client: message received\n");
     return 0;
 }
 
@@ -71,11 +66,8 @@ void echo_client(int sockfd) {
 
 	struct message msg;
 
-	//printf("Message: ");
 	fflush(stdout);
 	while (1) {
-		//fds[0].revents = 0;
-		//fds[1].revents = 0;
 		if (poll(fds, 2, -1) == -1) {
 			perror("poll()");
 			break;
@@ -95,28 +87,20 @@ void echo_client(int sockfd) {
 				// on envoie le struct message configuré
 				if (send_next_message_size(sockfd, sizeof(struct message)) != 0) break;
 				if (send_message(sockfd, (void *)&msg, sizeof(struct message)) != 0) break;
-			} else if (strncmp(buff, "/who", 5) == 0) {
+			} else if (strncmp(buff, "/who ", 5) == 0) {
 				msg.type = NICKNAME_LIST;
-				//msg.infos[0] = '\0';
-				//msg.nick_sender[0] = '\0';
-				//msg.pld_len = 0;
 				// on envoie le struct message configuré
+				send_next_message_size(sockfd, sizeof(struct message));
+				send_message(sockfd, (void *)&msg, sizeof(struct message));
+			} else if (strncmp(buff, "/whois ", 7)==0){
+				msg.type = NICKNAME_INFOS;
+				strncpy(msg.infos, buff + 7, INFOS_LEN - 1);
+				msg.infos[INFOS_LEN - 1] = '\0';
+				msg.pld_len = 0;
 				send_next_message_size(sockfd, sizeof(struct message));
 				send_message(sockfd, (void *)&msg, sizeof(struct message));
 			}
 
-
-
-			//msg_size = strlen(buff);
-			// Sending size then message
-			// if (send_next_message_size(sockfd, msg_size) != 0) {
-			// 	printf("client: error on sending message size\n");
-			// 	break;
-			// }
-			// if (send_message(sockfd, buff, msg_size) != 0) {
-			// 	printf("client: error on sending message\n");
-			// 	break;
-			// }
 			if (strcmp(buff, "/quit") == 0) {
 				printf("client: quitting\n");
 				break;
@@ -124,7 +108,6 @@ void echo_client(int sockfd) {
 		}
 		// Data from server
 		if (fds[1].revents & (POLLIN | POLLHUP)) {
-			//memset(buff, 0, MSG_LEN);
 			msg_size = recv_message_size(sockfd);
 			if (msg_size <= 0 || msg_size >= MSG_LEN) {
 				printf("client: server left\n");
@@ -136,7 +119,6 @@ void echo_client(int sockfd) {
 			}
 			buff[msg_size] = '\0';
 			printf("Received: %s\n", buff);
-			//printf("Message: ");
 			fflush(stdout);
 		}
 	}

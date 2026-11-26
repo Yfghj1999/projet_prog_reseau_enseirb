@@ -7,57 +7,56 @@
 #include <poll.h>
 
 #include "include/common.h"
+#include "include/protocol.h"
 #include "include/msg_struct.h"
 
-int send_next_message_size(int socket, int msg_size){
-    int ret = 0;
-    int bytes_sent = 0;
-    while (bytes_sent != sizeof(int)){
-        ret = write(socket, (char *)&msg_size+bytes_sent,sizeof(msg_size)-bytes_sent);
-        if (ret <= 0) return -1;
-		bytes_sent += ret;
-    }
-    return 0;
-}
+// int send_next_message_size(int socket, int msg_size){
+//     int ret = 0;
+//     int bytes_sent = 0;
+//     while (bytes_sent != sizeof(int)){
+//         ret = write(socket, (char *)&msg_size+bytes_sent,sizeof(msg_size)-bytes_sent);
+//         if (ret <= 0) return -1;
+// 		bytes_sent += ret;
+//     }
+//     return 0;
+// }
 
-int recv_message_size(int sockfd){
-    int ret = 0;
-    int bytes_read = 0;
-    int size = 0 ;
-    while (bytes_read != sizeof(int)){
-        ret = read(sockfd, (char *)&size+bytes_read,sizeof(int)-bytes_read);
-        if (ret <= 0) return -1;
-		bytes_read += ret;
-    }
-    return size;
-}
+// int recv_message_size(int sockfd){
+//     int ret = 0;
+//     int bytes_read = 0;
+//     int size = 0 ;
+//     while (bytes_read != sizeof(int)){
+//         ret = read(sockfd, (char *)&size+bytes_read,sizeof(int)-bytes_read);
+//         if (ret <= 0) return -1;
+// 		bytes_read += ret;
+//     }
+//     return size;
+// }
 
-int send_message(int socket, void * buf, int msg_size){
-    int ret = 0;
-    int bytes_sent = 0;
-    while (bytes_sent != msg_size){
-        ret = write(socket, (char *)buf+bytes_sent, msg_size-bytes_sent);
-		if (ret <= 0) return -1;
-        bytes_sent += ret;
-    }
-    return 0;
-}
+// int send_message(int socket, void * buf, int msg_size){
+//     int ret = 0;
+//     int bytes_sent = 0;
+//     while (bytes_sent != msg_size){
+//         ret = write(socket, (char *)buf+bytes_sent, msg_size-bytes_sent);
+// 		if (ret <= 0) return -1;
+//         bytes_sent += ret;
+//     }
+//     return 0;
+// }
 
-int recv_message(int sockfd, void * buf, int size){
-    int ret = 0;
-    int bytes_read = 0;
-    while (bytes_read != size){
-        ret = read(sockfd, (char *)buf+bytes_read, size-bytes_read);
-		if (ret <= 0) return -1;
-        bytes_read += ret;
-    }
-    return 0;
-}
+// int recv_message(int sockfd, void * buf, int size){
+//     int ret = 0;
+//     int bytes_read = 0;
+//     while (bytes_read != size){
+//         ret = read(sockfd, (char *)buf+bytes_read, size-bytes_read);
+// 		if (ret <= 0) return -1;
+//         bytes_read += ret;
+//     }
+//     return 0;
+// }
 
 void echo_client(int sockfd) {
 	char buff[MSG_LEN];
-	int msg_size;
-	int i = 0;
 	struct pollfd fds[2];
 	fds[0].fd = 0;
 	fds[0].events = POLLIN;
@@ -85,20 +84,17 @@ void echo_client(int sockfd) {
 				msg.infos[INFOS_LEN - 1] = '\0';
 				msg.pld_len = 0;
 				// on envoie le struct message configuré
-				if (send_next_message_size(sockfd, sizeof(struct message)) != 0) break;
-				if (send_message(sockfd, (void *)&msg, sizeof(struct message)) != 0) break;
-			} else if (strncmp(buff, "/who ", 5) == 0) {
+				if (protocol_send_message(sockfd, &msg, NULL) != 0) break;
+			} else if (strcmp(buff, "/who") == 0) {
 				msg.type = NICKNAME_LIST;
 				// on envoie le struct message configuré
-				send_next_message_size(sockfd, sizeof(struct message));
-				send_message(sockfd, (void *)&msg, sizeof(struct message));
+				if (protocol_send_message(sockfd, &msg, NULL) != 0) break;
 			} else if (strncmp(buff, "/whois ", 7)==0){
 				msg.type = NICKNAME_INFOS;
 				strncpy(msg.infos, buff + 7, INFOS_LEN - 1);
 				msg.infos[INFOS_LEN - 1] = '\0';
 				msg.pld_len = 0;
-				send_next_message_size(sockfd, sizeof(struct message));
-				send_message(sockfd, (void *)&msg, sizeof(struct message));
+				if (protocol_send_message(sockfd, &msg, NULL) != 0) break;
 			}
 
 			if (strcmp(buff, "/quit") == 0) {
@@ -108,17 +104,15 @@ void echo_client(int sockfd) {
 		}
 		// Data from server
 		if (fds[1].revents & (POLLIN | POLLHUP)) {
-			msg_size = recv_message_size(sockfd);
-			if (msg_size <= 0 || msg_size >= MSG_LEN) {
+			void *payload = NULL;
+			if (protocol_recv_message(sockfd, &msg, &payload) != 0) {
 				printf("client: server left\n");
 				break;
 			}
-			if (recv_message(sockfd, buff, msg_size) != 0) {
-				printf("client: nothing read\n");
-				break;
+			if (payload != NULL) {
+				printf("%s\n", (char *)payload);
 			}
-			buff[msg_size] = '\0';
-			printf("%s\n", buff);
+			free(payload);
 			fflush(stdout);
 		}
 	}

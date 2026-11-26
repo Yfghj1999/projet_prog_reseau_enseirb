@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <time.h>
 
+#include "include/protocol.h"
 #include "include/common.h"
 #include "include/msg_struct.h"
 
@@ -101,54 +102,67 @@ int is_nickname_free(struct client_node **head, char *nickname) {
     return 0;
 }
 
-int recv_message_size(int sockfd){
-    int ret = 0;
-    int bytes_read = 0;
-    int size = 0 ;
-    while (bytes_read != sizeof(int)){
-        ret = read(sockfd, (char *)&size+bytes_read,sizeof(int)-bytes_read);
-        if (ret <= 0) return -1;
-        bytes_read += ret;
-    }
-    //printf("server: size received\n");
-    return size;
-}
+// int recv_message_size(int sockfd){
+//     int ret = 0;
+//     int bytes_read = 0;
+//     int size = 0 ;
+//     while (bytes_read != sizeof(int)){
+//         ret = read(sockfd, (char *)&size+bytes_read,sizeof(int)-bytes_read);
+//         if (ret <= 0) return -1;
+//         bytes_read += ret;
+//     }
+//     //printf("server: size received\n");
+//     return size;
+// }
 
-int send_next_message_size(int socket, int msg_size){
-    int ret = 0;
-    int bytes_sent = 0;
-    while (bytes_sent != sizeof(int)){
-        ret = write(socket, (char *)&msg_size+bytes_sent,sizeof(msg_size)-bytes_sent);
-        if (ret <= 0) return -1;
-		bytes_sent += ret;
-    }
-    //printf("server: size sent\n");
-    return 0;
-}
+// int send_next_message_size(int socket, int msg_size){
+//     int ret = 0;
+//     int bytes_sent = 0;
+//     while (bytes_sent != sizeof(int)){
+//         ret = write(socket, (char *)&msg_size+bytes_sent,sizeof(msg_size)-bytes_sent);
+//         if (ret <= 0) return -1;
+// 		bytes_sent += ret;
+//     }
+//     //printf("server: size sent\n");
+//     return 0;
+// }
 
-int send_message(int socket, void * buf, int msg_size){
-    int ret = 0;
-    int bytes_sent = 0;
-    //printf("server: sending message\n");
-    while (bytes_sent != msg_size){
-        ret = write(socket, (char *)buf+bytes_sent, msg_size-bytes_sent);
-		if (ret <= 0) return -1;
-        bytes_sent += ret;
-    }
-    //printf("server: message sent\n");
-    return 0;
-}
+// int send_message(int socket, void * buf, int msg_size){
+//     int ret = 0;
+//     int bytes_sent = 0;
+//     //printf("server: sending message\n");
+//     while (bytes_sent != msg_size){
+//         ret = write(socket, (char *)buf+bytes_sent, msg_size-bytes_sent);
+// 		if (ret <= 0) return -1;
+//         bytes_sent += ret;
+//     }
+//     //printf("server: message sent\n");
+//     return 0;
+// }
 
-int recv_message(int sockfd, void * buf, int size){
-    int ret = 0;
-    int bytes_read = 0;
-    while (bytes_read != size){
-        ret = read(sockfd, (char *)buf+bytes_read, size-bytes_read);
-		if (ret <= 0) return -1;
-        bytes_read += ret;
+// int recv_message(int sockfd, void * buf, int size){
+//     int ret = 0;
+//     int bytes_read = 0;
+//     while (bytes_read != size){
+//         ret = read(sockfd, (char *)buf+bytes_read, size-bytes_read);
+// 		if (ret <= 0) return -1;
+//         bytes_read += ret;
+//     }
+//     //printf("server: message received\n");
+//     return 0;
+// }
+
+// return 0 if ok
+int send_server_text(int fd, enum msg_type type, const char *payload, const char *infos) {
+    struct message reply;
+    memset(&reply, 0, sizeof(reply));
+    strcpy(reply.nick_sender, "Server");
+    reply.type = type;
+    if (infos != NULL) {
+        strncpy(reply.infos, infos, INFOS_LEN - 1);
     }
-    //printf("server: message received\n");
-    return 0;
+    reply.pld_len = strlen(payload);
+    return protocol_send_message(fd, &reply, payload);
 }
 
 int handle_bind(char *port) {
@@ -246,27 +260,24 @@ int main(int argc, char *argv[]) {
                 
             } else if (fds[i].fd != welcoming_sfd && (fds[i].revents & (POLLIN | POLLHUP))) {
                 int close_connection_flag = 0;
+                void *payload = NULL;
                 struct client_node *current = clients;
 
                 // on recoit la struct
-                int msg_size = recv_message_size(fds[i].fd);
-                if (msg_size != sizeof(struct message)) close_connection_flag = 1;
-                else if (recv_message(fds[i].fd, &msg, sizeof(struct message)) != 0) close_connection_flag = 1;
-                else { 
+                if (protocol_recv_message(fds[i].fd, &msg, &payload) != 0) close_connection_flag = 1;
+                else {
                     msg.infos[INFOS_LEN - 1] = '\0';
                     switch (msg.type) {
                         case NICKNAME_NEW:
                             // on ajoute le pseudo au client concerné
                             if (is_valid_nickname(msg.infos) != 0) {
-                                if (send_next_message_size(fds[i].fd, sizeof(INVALID_NICKNAME)) != 0
-                                    || send_message(fds[i].fd, INVALID_NICKNAME, sizeof(INVALID_NICKNAME)) != 0) {
+                                if (send_server_text(fds[i].fd, NICKNAME_NEW, INVALID_NICKNAME, NULL) != 0) {
                                     close_connection_flag = 1;
                                 }
                                 break;
                             }
                             if (is_nickname_free(&clients, msg.infos) != 0) {
-                                if (send_next_message_size(fds[i].fd, sizeof(NICKNAME_TAKEN)) != 0
-                                    || send_message(fds[i].fd, NICKNAME_TAKEN, sizeof(NICKNAME_TAKEN)) != 0) {
+                                if (send_server_text(fds[i].fd, NICKNAME_NEW, NICKNAME_TAKEN, NULL) != 0) {
                                     close_connection_flag = 1;
                                 }
                                 break;
@@ -275,18 +286,12 @@ int main(int argc, char *argv[]) {
                                 add_nickname_client(&clients, fds[i].fd, msg.infos); // penser à vérifier l'ajout du nickname
                                 printf("%s is connected\n", msg.infos);
                                 // on lui répond
-                                //len = strlen(WELCOME) + INFOS_LEN + 1;
-                                char welcome_buff[sizeof(WELCOME) + INFOS_LEN + 1];
-                                strcpy(welcome_buff, WELCOME);
-                                strcat(welcome_buff, msg.infos);
-                                //strcat(welcome_buff, "\n");
-                                if (send_next_message_size(fds[i].fd, strlen(welcome_buff) + 1) != 0
-                                    || send_message(fds[i].fd, welcome_buff, strlen(welcome_buff) + 1) != 0) {
-                                    close_connection_flag = 1;
-                                }
+                                char welcome_buff[sizeof(WELCOME) + INFOS_LEN];
+                                snprintf(welcome_buff, sizeof(welcome_buff), "%s%s", WELCOME, msg.infos);
+                                if (send_server_text(fds[i].fd, NICKNAME_NEW, welcome_buff, msg.infos) != 0) close_connection_flag = 1;
                                 break;
                             }
-                        case NICKNAME_LIST:
+                        case NICKNAME_LIST: {
                             char who_list_buff[MSG_LEN] = {0};
                             strcpy(who_list_buff, WHO_LIST);
                             while (current != NULL) {
@@ -297,35 +302,35 @@ int main(int argc, char *argv[]) {
                                 }
                                 current = current->next;
                             }
-                            if (send_next_message_size(fds[i].fd, strlen(who_list_buff) + 1) != 0
-                                || send_message(fds[i].fd, who_list_buff, strlen(who_list_buff) + 1) != 0) {
-                                close_connection_flag = 1;
-                            }
+                            if (send_server_text(fds[i].fd, NICKNAME_LIST, who_list_buff, NULL) != 0) close_connection_flag = 1;
                             break;
-                            case NICKNAME_INFOS:
+                        }
+                        case NICKNAME_INFOS: {
                             char who_is_buff[MSG_LEN] = {0};
                             char date_str[32];
-                            strftime(date_str, sizeof(date_str), "%Y/%m/%d@%H:%M", localtime(&current->connection_time));
-                                while (current != NULL) {
-                                    if (strcmp(current->nickname, msg.infos) == 0) {
-                                        snprintf(who_is_buff, sizeof(who_is_buff),
-                                            "%s connected since %s with IP address %s and port number %hu",
-                                            current->nickname,
-                                            date_str,
-                                            inet_ntoa(current->addr.sin_addr),
-                                            ntohs(current->addr.sin_port));
-                                    }
-                                    current = current->next;
+                            while (current != NULL) {
+                                if (strcmp(current->nickname, msg.infos) == 0) {
+                                    strftime(date_str, sizeof(date_str), "%Y/%m/%d@%H:%M", localtime(&current->connection_time));
+                                    snprintf(who_is_buff, sizeof(who_is_buff),
+                                        "%s connected since %s with IP address %s and port number %hu",
+                                        current->nickname,
+                                        date_str,
+                                        inet_ntoa(current->addr.sin_addr),
+                                        ntohs(current->addr.sin_port));
                                 }
-                                if (send_next_message_size(fds[i].fd, strlen(who_is_buff) + 1) != 0
-                                    || send_message(fds[i].fd, who_is_buff, strlen(who_is_buff) + 1) != 0) {
-                                    close_connection_flag = 1;
-                                }
-                                break;
+                                current = current->next;
+                            }
+                            if (who_is_buff[0] == '\0') {
+                                snprintf(who_is_buff, sizeof(who_is_buff), "Unknown user %s", msg.infos);
+                            }
+                            if (send_server_text(fds[i].fd, NICKNAME_INFOS, who_is_buff, NULL) != 0) close_connection_flag = 1;
+                            break;
+                        }
                         default:
                             printf("switch default\n");
                     }
                 }
+                free(payload);
                 if (close_connection_flag) {
                     printf("server: closing fd (%d)\n", fds[i].fd);
                     remove_client(&clients, fds[i].fd);

@@ -109,6 +109,14 @@ struct client_node *find_client_by_fd(struct client_node **head, int fd){
         current = current->next;
     }
     return NULL;
+}
+struct client_node *find_client_by_nick(struct client_node **head, char *nickname){
+    struct client_node *current = *head;
+    while (current != NULL) {
+        if (strcmp(nickname,current->nickname)==0 ) return current;
+        current = current->next;
+    }
+    return NULL;
 
 }
 
@@ -305,6 +313,32 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                             break;
+                        }
+                        case UNICAST_SEND: {
+                            struct client_node *sender = find_client_by_fd(&clients,fds[i].fd);
+                            
+                            struct message fwd;
+                            // trouver la fd avec le non du client
+                            char *target = msg.infos;
+                            if (sender == NULL || sender->nickname[0] == '\0') {
+                                send_server_text(fds[i].fd,UNICAST_SEND,NO_NICKNAME,NULL);
+                                break;
+                            }
+                            struct client_node *dest = find_client_by_nick(&clients,target);
+                            if (dest == NULL||strcmp(dest->nickname,"") == 0){
+                                char err_buff[MSG_LEN];
+                                snprintf(err_buff, sizeof(err_buff), "Unknown user %s", target);
+                                send_server_text(fds[i].fd,UNICAST_SEND,err_buff,NULL);
+                                break;
+                            }
+                            memset(&fwd, 0, sizeof(fwd));
+                            fwd.type = UNICAST_SEND;
+                            strcpy(fwd.nick_sender,sender->nickname);
+                            fwd.pld_len = msg.pld_len;
+                            protocol_send_message(dest->fd, &fwd, payload);
+                            break;
+
+
                         }
                         default:
                             printf("switch default\n");

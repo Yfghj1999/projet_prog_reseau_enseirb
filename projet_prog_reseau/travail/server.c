@@ -22,6 +22,7 @@
 #define INVALID_NICKNAME "Invalid nickname"
 #define NICKNAME_TAKEN "Nickname already taken"
 #define WHO_LIST "Online users are\n"
+#define NO_NICKNAME "Need a nickname"
 
 struct client_node {
     int fd;
@@ -101,58 +102,16 @@ int is_nickname_free(struct client_node **head, char *nickname) {
     }
     return 0;
 }
+struct client_node *find_client_by_fd(struct client_node **head, int fd){
+    struct client_node *current = *head;
+    while (current != NULL) {
+        if (current->fd==fd ) return current;
+        current = current->next;
+    }
+    return NULL;
 
-// int recv_message_size(int sockfd){
-//     int ret = 0;
-//     int bytes_read = 0;
-//     int size = 0 ;
-//     while (bytes_read != sizeof(int)){
-//         ret = read(sockfd, (char *)&size+bytes_read,sizeof(int)-bytes_read);
-//         if (ret <= 0) return -1;
-//         bytes_read += ret;
-//     }
-//     //printf("server: size received\n");
-//     return size;
-// }
+}
 
-// int send_next_message_size(int socket, int msg_size){
-//     int ret = 0;
-//     int bytes_sent = 0;
-//     while (bytes_sent != sizeof(int)){
-//         ret = write(socket, (char *)&msg_size+bytes_sent,sizeof(msg_size)-bytes_sent);
-//         if (ret <= 0) return -1;
-// 		bytes_sent += ret;
-//     }
-//     //printf("server: size sent\n");
-//     return 0;
-// }
-
-// int send_message(int socket, void * buf, int msg_size){
-//     int ret = 0;
-//     int bytes_sent = 0;
-//     //printf("server: sending message\n");
-//     while (bytes_sent != msg_size){
-//         ret = write(socket, (char *)buf+bytes_sent, msg_size-bytes_sent);
-// 		if (ret <= 0) return -1;
-//         bytes_sent += ret;
-//     }
-//     //printf("server: message sent\n");
-//     return 0;
-// }
-
-// int recv_message(int sockfd, void * buf, int size){
-//     int ret = 0;
-//     int bytes_read = 0;
-//     while (bytes_read != size){
-//         ret = read(sockfd, (char *)buf+bytes_read, size-bytes_read);
-// 		if (ret <= 0) return -1;
-//         bytes_read += ret;
-//     }
-//     //printf("server: message received\n");
-//     return 0;
-// }
-
-// return 0 if ok
 int send_server_text(int fd, enum msg_type type, const char *payload, const char *infos) {
     struct message reply;
     memset(&reply, 0, sizeof(reply));
@@ -324,6 +283,27 @@ int main(int argc, char *argv[]) {
                                 snprintf(who_is_buff, sizeof(who_is_buff), "Unknown user %s", msg.infos);
                             }
                             if (send_server_text(fds[i].fd, NICKNAME_INFOS, who_is_buff, NULL) != 0) close_connection_flag = 1;
+                            break;
+                        }
+                        case BROADCAST_SEND: {
+                            struct client_node *sender = find_client_by_fd(&clients,fds[i].fd);
+                            struct message fwd;
+
+                            if (sender == NULL || sender->nickname[0] == '\0') {
+                                send_server_text(fds[i].fd,BROADCAST_SEND,NO_NICKNAME,NULL);
+                                break;
+                            }
+
+                            memset(&fwd, 0, sizeof(fwd));
+                            fwd.type = BROADCAST_SEND;
+                            strcpy(fwd.nick_sender,sender->nickname);
+                            fwd.pld_len = msg.pld_len;
+
+                            for (current = clients; current != NULL; current = current->next) {
+                                if (strcmp(current->nickname,sender->nickname)!=0&&current->nickname[0]!='\0') {
+                                    protocol_send_message(current->fd, &fwd, payload);
+                                }
+                            }
                             break;
                         }
                         default:

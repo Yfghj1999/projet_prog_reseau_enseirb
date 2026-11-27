@@ -23,7 +23,7 @@ set_nicks() {
 
 # ---- Mode relance (appelé par Ctrl+b r) ----
 if [ "$1" = "reload" ]; then
-    if ! out=$(make 2>&1); then
+    if ! out=$(make clean all 2>&1); then
         echo "$out"       # erreurs de compilation affichées dans tmux (q pour fermer)
         exit 1
     fi
@@ -37,7 +37,7 @@ if [ "$1" = "reload" ]; then
 fi
 
 # ---- Lancement normal ----
-make || exit 1
+make clean all || exit 1
 
 tmux kill-session -t "$SESSION" 2>/dev/null
 tmux new-session -d -s "$SESSION" "$SERVER_CMD"

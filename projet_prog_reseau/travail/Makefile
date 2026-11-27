@@ -1,17 +1,17 @@
 CC     = gcc
-CFLAGS = -Iinclude -Wall -Wextra
+CFLAGS = -Iinclude -I. -Wall -Wextra
 
 all: bin/client bin/server
 
-bin/client: client.c protocol.c file_transfert.c include/*.h
+bin/client: src/client.c src/protocol.c src/file_transfert.c include/*.h
 	mkdir -p bin
-	$(CC) $(CFLAGS) client.c protocol.c file_transfert.c -o $@
+	$(CC) $(CFLAGS) src/client.c src/protocol.c src/file_transfert.c -o $@
 
-bin/server: server.c protocol.c include/*.h
+bin/server: src/server.c src/protocol.c include/*.h
 	mkdir -p bin
-	$(CC) $(CFLAGS) server.c protocol.c -o $@
+	$(CC) $(CFLAGS) src/server.c src/protocol.c -o $@
 
 clean:
-	rm -rf bin
+	rm -rf bin inbox
 
 .PHONY: all clean

@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <poll.h>
+#include <ctype.h>
 
 #include "include/common.h"
 #include "include/client.h"
@@ -86,13 +87,13 @@ int client_run(struct client *client) {
 				strncpy(msg.infos, buff + 6, INFOS_LEN - 1);
 			} else if (strcmp(buff, "/who") == 0) {
 				msg.type = NICKNAME_LIST;
-			} else if (strncmp(buff, "/whois ", 7)==0) {
+			} else if (strncmp(buff, "/whois ", 7) == 0) {
 				msg.type = NICKNAME_INFOS;
 				strncpy(msg.infos, buff + 7, INFOS_LEN - 1);
 			} else if (strncmp(buff, "/msgall ", 8) ==0) {
 				msg.type = BROADCAST_SEND;
 				pld = buff + 8;
-			} else if (strncmp(buff, "/msg ", 5) ==0) {
+			} else if (strncmp(buff, "/msg ", 5) == 0) {
 				char *space = strchr(buff + 5, ' '); // premier espace après le pseudo
 				if (space == NULL) {
 					printf("usage: /msg <pseudo> <message>\n");
@@ -102,6 +103,16 @@ int client_run(struct client *client) {
 				msg.type = UNICAST_SEND;				
 				strncpy(msg.infos, buff + 5, INFOS_LEN - 1); // pseudo du destinataire
 				pld = space + 1; // message à envoyer
+			} else if (strncmp(buff, "/send ", 6) == 0) {
+				char *space = strchr(buff + 6, ' '); // premier espace après le pseudo
+				if (space == NULL) {
+					printf("usage: /send <pseudo> </chemin/nom_du_fichier>\n");
+					continue;
+				}
+				*space = '\0'; // coupe buff en deux -> pseudo puis /chemin/nom_du_fichier
+				msg.type = FILE_REQUEST;				
+				strncpy(msg.infos, buff + 6, INFOS_LEN - 1); // pseudo du destinataire
+				pld = space + 1; // /chemin/nom_du_fichier à envoyer
 			} else if (buff[0] == '/') {
 				printf("unknown command\n");
 				continue;
@@ -120,6 +131,8 @@ int client_run(struct client *client) {
 
 		// Data from server
 		if (fds[1].revents & (POLLIN | POLLHUP)) {
+			struct message msg_decision;
+			char buff_decision[4];
 			void *payload = NULL;
 			if (protocol_recv_message(client->sockfd, &msg, &payload) != 0) {
 				printf("client: server left\n");
@@ -128,7 +141,30 @@ int client_run(struct client *client) {
 			if (msg.type == NICKNAME_NEW && msg.infos[0] != '\0') {
 				strcpy(client->nickname, msg.infos); // pseudo accepté par le serveur, donc on l'enregistre ici
 			}
-			if (payload != NULL) {
+			if (msg.type == FILE_REQUEST && msg.infos[0] != '\0') { 
+				printf("%s wants you to accept the transfer of the file named \"%s\". Do you accept? [Y/N]", msg.nick_sender, (char *)payload);
+				fflush(stdout);
+				if (fgets(buff_decision, sizeof(buff_decision), stdin) != NULL) {
+					buff_decision[0] = tolower((unsigned char)buff_decision[0]);
+					if (buff_decision[0] == 'n' || buff_decision[0] == 'y') {
+						memset(&msg_decision, 0, sizeof(msg_decision));
+						strcpy(msg_decision.nick_sender, client->nickname);
+						strcpy(msg_decision.infos, msg.nick_sender);
+						msg_decision.type = (buff_decision[0] == 'y') ? FILE_ACCEPT : FILE_REJECT;
+						if (protocol_send_message(fds[1].fd, &msg_decision, NULL) != 0) {
+							printf("error while sending decision to %s\n", msg.nick_sender);
+							return -1;
+						}
+					}
+				}
+			}
+			if (msg.type == FILE_ACCEPT && msg.infos[0] != '\0') {
+				printf("%s accepted file transfer\n", msg.nick_sender);
+			}
+			if (msg.type == FILE_REJECT && msg.infos[0] != '\0') {
+				printf("%s refused file transfer\n", msg.nick_sender);
+			}
+			if (payload != NULL && msg.type != FILE_REQUEST) {
 				printf("[%s] >> %s\n", msg.nick_sender, (char *)payload);
 			}
 			free(payload);

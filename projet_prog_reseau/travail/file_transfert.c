@@ -12,7 +12,7 @@
 #include "include/file_transfert.h"
 
 // permet de trouver le nom de fichier à partir d'un chemin renvoie un pointeur vers le nom de fichier (après le dernier /)
-static const char *base_name(const char *path)
+const char *base_name(const char *path)
 {
     const char *slash = strrchr(path, '/');
 

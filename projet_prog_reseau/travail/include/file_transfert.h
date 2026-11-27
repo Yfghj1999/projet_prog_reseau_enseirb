@@ -12,4 +12,6 @@ int file_send(const char *ip, const char *port, const char *path, const char *my
    l'écrit dans INBOX_DIR, envoie FILE_ACK. Renvoie 0 si OK, -1 sinon. */
 int file_receive(int listen_fd, const char *my_nick);
 
+const char *base_name(const char *path);
+
 #endif

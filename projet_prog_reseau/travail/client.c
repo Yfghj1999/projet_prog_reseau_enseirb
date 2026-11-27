@@ -6,21 +6,30 @@
 #include <unistd.h>
 #include <poll.h>
 #include <ctype.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "common.h"
 #include "client.h"
 #include "protocol.h"
 #include "msg_struct.h"
+#include "include/file_transfert.h"
 
 // contient la socket de connexion au serveur et le pseudo du client 
 struct client {
 	char nickname[NICK_LEN];
 	int sockfd;
+	int send_pending;
+	char send_to[NICK_LEN];
+	char send_path[MSG_LEN];
 };
 
 // envoie une demande de connexion
 int client_connect(struct client *client, const char *host, const char *port) {
 	client->nickname[0] = '\0';
+	client->send_pending = 0;
+	client->send_to[0] = '\0';
+	client->send_path[0] = '\0';
 	client->sockfd = -1;
 	struct addrinfo hints, *result, *rp;
 	int sfd;
@@ -49,6 +58,48 @@ int client_connect(struct client *client, const char *host, const char *port) {
 	freeaddrinfo(result);
 	client->sockfd = sfd;
 	return 0;
+}
+// accepte une connexion entrante et reçoit un fichier, renvoie 0 si OK, -1 sinon
+static int open_listener(int server_fd, char *out, size_t out_size)
+{
+	struct sockaddr_in addr;
+	socklen_t len;
+	char ip[INET_ADDRSTRLEN];
+	int fd;
+
+	// socket TCP
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd == -1) { perror("socket"); return -1; }
+
+	// bind sur le port 0 = "système, choisis-moi un port libre"
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);   // ecouter sur toutes les interfaces
+	addr.sin_port = htons(0);
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+		perror("bind"); close(fd); return -1;
+	}
+
+	// ecoute sur la socket
+	if (listen(fd, 1) == -1) { perror("listen"); close(fd); return -1; }
+
+	// port ?
+	len = sizeof(addr);
+	if (getsockname(fd, (struct sockaddr *)&addr, &len) == -1) {
+		perror("getsockname"); close(fd); return -1;
+	}
+	unsigned short port = ntohs(addr.sin_port); // converti dans l'ordre de la machine
+
+	// ip ?
+	len = sizeof(addr);
+	if (getsockname(server_fd, (struct sockaddr *)&addr, &len) == -1) {
+		perror("getsockname"); close(fd); return -1;
+	}
+	inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+
+	//fabriquer "ip:port" 
+	snprintf(out, out_size, "%s:%hu", ip, port);
+	return fd;
 }
 
 // gere le polling de connexion et renvoie 0 si le client quitte
@@ -111,10 +162,37 @@ int client_run(struct client *client) {
 					printf("usage: /send <pseudo> </chemin/nom_du_fichier>\n");
 					continue;
 				}
-				*space = '\0'; // coupe buff en deux pour separer le pseudo puis le /chemin/nom_du_fichier
-				msg.type = FILE_REQUEST;		
-				copy_str(msg.infos, sizeof(msg.infos), buff + 6); // on recupere le pseudo du destinataire saisi par l'utilisateur
-				pld = space + 1; // /chemin/nom_du_fichier a envoyer
+				*space = '\0'; // coupe buff en deux : pseudo / chemin
+				char *dest = buff + 6;      // le pseudo du destinataire
+				char *path = space + 1;     // le chemin complet du fichier
+
+				// check pseudo
+				if (client->nickname[0] == '\0') {
+					printf("choose a nickname first with /nick\n");
+					continue;
+				}
+				// check si un transfert est deja en cours
+				if (client->send_pending) {
+					printf("a file transfer is already pending\n");
+					continue;
+				}
+				// check si le fichier existe
+				FILE *test = fopen(path, "rb");
+				if (test == NULL) {
+					perror("fopen");
+					continue;
+				}
+				fclose(test);
+
+				// on prepare le transfert de fichier
+				client->send_pending = 1;
+				copy_str(client->send_to, sizeof(client->send_to), dest);
+				copy_str(client->send_path, sizeof(client->send_path), path);
+
+				// on envoie la demande de transfert de fichier au destinataire
+				msg.type = FILE_REQUEST;
+				copy_str(msg.infos, sizeof(msg.infos), dest);
+				pld = (char *)base_name(path); // on envoie le nom du fichier (pas le chemin complet)
 			} else if (buff[0] == '/') { // l'utilisateur a saisi une commande inconnue
 				printf("unknown command\n");
 				continue;
@@ -134,7 +212,7 @@ int client_run(struct client *client) {
 		// Data from server
 		if (fds[1].revents & (POLLIN | POLLHUP)) {
 			struct message msg_decision;
-			char buff_decision[4];
+			char buff_decision[MSG_LEN];
 			void *payload = NULL;
 			if (protocol_recv_message(client->sockfd, &msg, &payload) != 0) {
 				printf("client: server left\n");
@@ -143,30 +221,78 @@ int client_run(struct client *client) {
 			if (msg.type == NICKNAME_NEW && msg.infos[0] != '\0') { // le serveur a accepte notre demande de pseudo
 				strcpy(client->nickname, msg.infos); // on l'enregistre ici
 			}
-			if (msg.type == FILE_REQUEST && msg.infos[0] != '\0') { // un utilisateur souhaite nous envoyer un fichier
+			if (msg.type == FILE_REQUEST && msg.infos[0] != '\0' && payload != NULL) { // un utilisateur souhaite nous envoyer un fichier
 				printf("%s wants you to accept the transfer of the file named \"%s\". Do you accept? [Y/N]", msg.nick_sender, (char *)payload);
 				fflush(stdout);
-				if (fgets(buff_decision, sizeof(buff_decision), stdin) != NULL) { // on recupere la decision de l'utilisateur
-					buff_decision[0] = tolower((unsigned char)buff_decision[0]);
-					if (buff_decision[0] == 'n' || buff_decision[0] == 'y') {
-						memset(&msg_decision, 0, sizeof(msg_decision));
-						strcpy(msg_decision.nick_sender, client->nickname);
-						strcpy(msg_decision.infos, msg.nick_sender);
-						msg_decision.type = (buff_decision[0] == 'y') ? FILE_ACCEPT : FILE_REJECT; // on envoie une acception ou un refus suivant la decision de l'utilisateur
-						if (protocol_send_message(fds[1].fd, &msg_decision, NULL) != 0) {
-							printf("error while sending decision to %s\n", msg.nick_sender);
+				/* lire la réponse : tout ce qui n'est pas Y vaut N */
+				char answer = 'n';
+				if (fgets(buff_decision, sizeof(buff_decision), stdin) != NULL) {
+					answer = tolower((unsigned char)buff_decision[0]);
+				}
+
+				memset(&msg_decision, 0, sizeof(msg_decision));
+				copy_str(msg_decision.nick_sender, sizeof(msg_decision.nick_sender), client->nickname);
+				copy_str(msg_decision.infos, sizeof(msg_decision.infos), msg.nick_sender);
+
+				if (answer != 'y') {
+					// N ou autre : on refuse le transfert
+					msg_decision.type = FILE_REJECT;
+					if (protocol_send_message(client->sockfd, &msg_decision, NULL) != 0) return -1;
+				} else {
+					// y
+					char addr_str[64];
+					int listen_fd = open_listener(client->sockfd, addr_str, sizeof(addr_str));
+
+					if (listen_fd == -1) {          /* pas de porte ouverte → on refuse */
+						msg_decision.type = FILE_REJECT;
+						protocol_send_message(client->sockfd, &msg_decision, NULL);
+					} else {
+						msg_decision.type = FILE_ACCEPT;
+						msg_decision.pld_len = strlen(addr_str);
+						if (protocol_send_message(client->sockfd, &msg_decision, addr_str) != 0) {
+							close(listen_fd);
 							return -1;
 						}
+						file_receive(listen_fd, client->nickname); 
+						close(listen_fd); 
 					}
 				}
 			}
-			if (msg.type == FILE_ACCEPT && msg.infos[0] != '\0') { // le destinataire accepte notre demande d'envoi de fichier
+			
+			if (msg.type == FILE_ACCEPT) {
 				printf("%s accepted file transfer\n", msg.nick_sender);
-			}
-			if (msg.type == FILE_REJECT && msg.infos[0] != '\0') { // le destinataire refuse notre demande d'envoi de fichier
+				// verifier que c'est bien le destinataire du fichier qui a accepté
+				if (client->send_pending == 0
+				    || payload == NULL
+				    || strcmp(msg.nick_sender, client->send_to) != 0) {
+					printf("unexpected file acceptance ignored\n");
+				} else {
+					// recuperer l'adresse ip et le port du destinataire
+					char *ip = (char *)payload;
+					char *colon = strrchr(ip, ':'); // chercher le DERNIER ':' dans ip
+
+					if (colon == NULL) {
+						printf("invalid address received\n");
+					} else {
+						*colon = '\0';              // "127.0.0.1:45678" → "127.0.0.1" \0 "45678" 
+						char *port = colon + 1;
+
+						// sur le bon destinataire, on envoie le fichier
+						printf("Connecting to %s and sending the file...\n", msg.nick_sender);
+						if (file_send(ip, port,client->send_path,client->nickname) != 0) {
+							printf("file transfer to %s failed\n", msg.nick_sender);
+						}
+					}
+					// fin
+					client->send_pending = 0;
+				}
+				}
+			if (msg.type == FILE_REJECT) {
 				printf("%s refused file transfer\n", msg.nick_sender);
+				client->send_pending = 0; // on remet send_pending à 0 pour pouvoir envoyer un autre fichier
+				
 			}
-			if (payload != NULL && msg.type != FILE_REQUEST) { 
+			if (payload != NULL && msg.type != FILE_REQUEST && msg.type != FILE_ACCEPT) {
 				printf("[%s] >> %s\n", msg.nick_sender, (char *)payload);
 			}
 			free(payload);

@@ -3,9 +3,9 @@ CFLAGS = -Iinclude -Wall -Wextra
 
 all: bin/client bin/server
 
-bin/client: client.c protocol.c include/*.h
+bin/client: client.c protocol.c file_transfert.c include/*.h
 	mkdir -p bin
-	$(CC) $(CFLAGS) client.c protocol.c -o $@
+	$(CC) $(CFLAGS) client.c protocol.c file_transfert.c -o $@
 
 bin/server: server.c protocol.c include/*.h
 	mkdir -p bin

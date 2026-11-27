@@ -12,9 +12,9 @@
 #include <errno.h>
 #include <time.h>
 
-#include "include/protocol.h"
-#include "include/common.h"
-#include "include/msg_struct.h"
+#include "protocol.h"
+#include "common.h"
+#include "msg_struct.h"
 
 #define MAX_CONN 20
 #define WELCOME "Welcome on the chat "
@@ -24,6 +24,7 @@
 #define WHO_LIST "Online users are\n"
 #define NO_NICKNAME "Need a nickname"
 
+// represente un client connecte
 struct client_node {
     int fd;
     char nickname[NICK_LEN];
@@ -32,6 +33,7 @@ struct client_node {
     struct client_node *next;
 };
 
+// ajoute un client a la liste chainee
 int add_client(struct client_node **head, int fd, struct sockaddr_in addr) {
     struct client_node *new_client_node = malloc(sizeof(struct client_node));
     if (new_client_node == NULL) return -1;
@@ -44,6 +46,7 @@ int add_client(struct client_node **head, int fd, struct sockaddr_in addr) {
     return 0;
 }
 
+// retire un client de la liste chainee 
 void remove_client(struct client_node **head, int fd) {
     struct client_node *current = *head;
     struct client_node *previous = NULL;
@@ -59,6 +62,7 @@ void remove_client(struct client_node **head, int fd) {
     }
 }
 
+// libere la memoire associee a un client lorsqu'il quitte
 void free_client_list(struct client_node **head) {
     struct client_node *current = *head;
     while (current != NULL){
@@ -70,19 +74,19 @@ void free_client_list(struct client_node **head) {
     *head = NULL;
 }
 
+// ajoute le pseudo envoye par le client dans la struct qui le represente
 void add_nickname_client(struct client_node **head, int fd, char *nickname) {
     struct client_node *current = *head;
     while (current != NULL) {
         if (current->fd == fd) {
             strcpy(current->nickname, nickname);
-            //printf("successfully added %s (nickname): %s (client.nickname)\n", nickname, current->nickname);
             break;
         }
         current = current->next;
     }
 }
 
-// return 0 if valid
+// retourne 0 si la pseudo est valide
 int is_valid_nickname(char *nickname) {
     size_t len = strlen(nickname);
     if ((len == 0) || len > NICK_MAX ) return 1;
@@ -93,7 +97,7 @@ int is_valid_nickname(char *nickname) {
     return 0;
 }
 
-// return 0 if free
+// retourne 0 si le pseudo est libre d'utilisation
 int is_nickname_free(struct client_node **head, char *nickname) {
     struct client_node *current = *head;
     while (current != NULL) {
@@ -102,6 +106,8 @@ int is_nickname_free(struct client_node **head, char *nickname) {
     }
     return 0;
 }
+
+// retourne le client connecte a la socket passe en parametre, si trouve
 struct client_node *find_client_by_fd(struct client_node **head, int fd){
     struct client_node *current = *head;
     while (current != NULL) {
@@ -110,6 +116,8 @@ struct client_node *find_client_by_fd(struct client_node **head, int fd){
     }
     return NULL;
 }
+
+// retourne le client via son pseudo passe en parametre, si trouve
 struct client_node *find_client_by_nick(struct client_node **head, char *nickname){
     struct client_node *current = *head;
     while (current != NULL) {
@@ -120,6 +128,7 @@ struct client_node *find_client_by_nick(struct client_node **head, char *nicknam
 
 }
 
+// envoie un message au client dont la socket est passe en parametre
 int send_server_text(int fd, enum msg_type type, const char *payload, const char *infos) {
     struct message reply;
     memset(&reply, 0, sizeof(reply));
@@ -132,6 +141,7 @@ int send_server_text(int fd, enum msg_type type, const char *payload, const char
     return protocol_send_message(fd, &reply, payload);
 }
 
+// gere les demandes de connexions
 int handle_bind(char *port) {
 	struct addrinfo hints, *result, *rp;
 	int sfd;
@@ -236,7 +246,7 @@ int main(int argc, char *argv[]) {
                     msg.infos[INFOS_LEN - 1] = '\0';
                     switch (msg.type) {
                         case NICKNAME_NEW:
-                            // on ajoute le pseudo au client concerné
+                            // on ajoute le pseudo au client concerne
                             if (is_valid_nickname(msg.infos) != 0) {
                                 if (send_server_text(fds[i].fd, NICKNAME_NEW, INVALID_NICKNAME, NULL) != 0) {
                                     close_connection_flag = 1;
@@ -250,9 +260,9 @@ int main(int argc, char *argv[]) {
                                 break;
                             }
                             else {
-                                add_nickname_client(&clients, fds[i].fd, msg.infos); // penser à vérifier l'ajout du nickname
+                                add_nickname_client(&clients, fds[i].fd, msg.infos); // penser a verifier l'ajout du nickname
                                 printf("%s is connected\n", msg.infos);
-                                // on lui répond
+                                // on lui repond
                                 char welcome_buff[sizeof(WELCOME) + INFOS_LEN];
                                 snprintf(welcome_buff, sizeof(welcome_buff), "%s%s", WELCOME, msg.infos);
                                 if (send_server_text(fds[i].fd, NICKNAME_NEW, welcome_buff, msg.infos) != 0) close_connection_flag = 1;

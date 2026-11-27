@@ -27,7 +27,7 @@ struct message {
 	char infos[INFOS_LEN];
 };
 
-static char* msg_type_str[] = {
+static char* msg_type_str[]  __attribute__((unused)) = {
 	"NICKNAME_NEW",
 	"NICKNAME_LIST",
 	"NICKNAME_INFOS",
@@ -45,4 +45,3 @@ static char* msg_type_str[] = {
 	"FILE_SEND",
 	"FILE_ACK"
 };
-

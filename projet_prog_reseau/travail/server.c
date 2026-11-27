@@ -314,7 +314,11 @@ int main(int argc, char *argv[]) {
                             }
                             break;
                         }
-                        case UNICAST_SEND: {
+                        case UNICAST_SEND:
+                        case FILE_REQUEST:
+                        case FILE_ACCEPT:
+                        case FILE_REJECT:
+                        {
                             struct client_node *sender = find_client_by_fd(&clients,fds[i].fd);
                             
                             struct message fwd;
@@ -327,17 +331,23 @@ int main(int argc, char *argv[]) {
                             struct client_node *dest = find_client_by_nick(&clients,target);
                             if (dest == NULL||strcmp(dest->nickname,"") == 0){
                                 char err_buff[MSG_LEN];
+                                enum msg_type err_type = (msg.type == FILE_REQUEST) ? FILE_REJECT : UNICAST_SEND;
                                 snprintf(err_buff, sizeof(err_buff), "Unknown user %s", target);
-                                send_server_text(fds[i].fd,UNICAST_SEND,err_buff,NULL);
+                                send_server_text(fds[i].fd,err_type,err_buff,NULL);
                                 break;
                             }
                             memset(&fwd, 0, sizeof(fwd));
-                            fwd.type = UNICAST_SEND;
+                            if (msg.type == UNICAST_SEND) fwd.type = UNICAST_SEND;
+                            else if (msg.type == FILE_REQUEST) fwd.type = FILE_REQUEST;
+                            else if (msg.type == FILE_ACCEPT) fwd.type = FILE_ACCEPT;
+                            else if (msg.type == FILE_REJECT) fwd.type = FILE_REJECT;
                             strcpy(fwd.nick_sender,sender->nickname);
                             fwd.pld_len = msg.pld_len;
+                            strncpy(fwd.infos,target,INFOS_LEN-1);
                             protocol_send_message(dest->fd, &fwd, payload);
                             break;
                         }
+
                         case ECHO_SEND:{
                             if(payload == NULL) break;
                             send_server_text(fds[i].fd,ECHO_SEND,payload,NULL);

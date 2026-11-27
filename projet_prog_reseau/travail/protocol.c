@@ -9,7 +9,7 @@
 #include "include/msg_struct.h"
 #include "include/protocol.h"
 
-#define MAX_RECV 1024
+#define MAX_RECV 65536
 
 
 int protocol_send_all(int socket_fd, const void *buffer, size_t length)
